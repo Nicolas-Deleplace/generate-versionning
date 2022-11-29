@@ -1,0 +1,21 @@
+name: 'Versionning Number Generator'
+description: 'Generate sequential build and version numbers for workflow runs'
+author: 'Nicolas Deleplace'
+runs:
+  using: 'node16'
+  main: 'main.js'
+inputs:
+  token:
+    description: 'GitHub Token to create and delete refs (GITHUB_TOKEN)'
+    required: false
+  prefix:
+    description: 'Prefix for the staging-version-<num> tag to make it unique if tracking multiple build & versions numbers'
+    required: false
+
+outputs:
+  version_number:
+    description: 'Generated version number'
+  build_number:
+    description: 'Generated build number'
+  tag_label:
+    description: 'New tag generated'
