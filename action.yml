@@ -1,21 +1,47 @@
-name: 'Versionning Number Generator'
-description: 'Generate sequential build and version numbers for workflow runs'
+name: 'Version Number Generator'
+description: 'Generate semantic version and build numbers (sequential or date-based) for GitHub Actions workflows'
 author: 'Nicolas Deleplace'
 runs:
-  using: 'node16'
-  main: 'main.js'
+  using: 'node20'
+  main: 'dist/index.js'
+
+branding:
+  icon: 'tag'
+  color: 'green'
+
 inputs:
   token:
-    description: 'GitHub Token to create and delete refs (GITHUB_TOKEN)'
-    required: false
+    description: 'GitHub Token to create and delete refs (typically secrets.GITHUB_TOKEN)'
+    required: true
   prefix:
-    description: 'Prefix for the staging-version-<num> tag to make it unique if tracking multiple build & versions numbers'
+    description: 'Prefix for the version tag (e.g. app1 -> auto-vX.Y.Z)'
     required: false
+    default: ''
+  increment:
+    description: 'Version increment strategy: buildNumber, bug, patch, minor, feature, major, none'
+    required: false
+    default: 'patch'
+  build_number_mode:
+    description: 'Choose build number format: sequential (default) or date (YYYYMMDD.x)'
+    required: false
+    default: 'sequential'
+  build_number_reinit:
+    description: 'Set to true to reset the build number to 1 for a given version'
+    required: false
+    default: 'false'
+  dry_run:
+    description: 'If true, simulate run without creating or deleting tags'
+    required: false
+    default: 'false'
 
 outputs:
   version_number:
-    description: 'Generated version number'
+    description: 'Generated semantic version (e.g. 2.3.1)'
   build_number:
-    description: 'Generated build number'
+    description: 'Generated build number (e.g. 4 or 2025042401 depending on mode)'
   tag_label:
-    description: 'New tag generated'
+    description: 'Newly created tag label (e.g. staging-version-2.3.1-4)'
+  old_tag_label:
+    description: 'Previous tag label found in repository (if applicable)'
+  previous_tag_label:
+    description: 'Tag label of the previous version (before this run)'
