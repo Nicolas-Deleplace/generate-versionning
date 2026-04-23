@@ -124,12 +124,12 @@ describe('Versioning logic (no prefix, just auto-vX.Y.Z-BUILD)', () => {
     });
 
     test('Date Build Number', () => {
+      const today = todayStr();
       const tags = [
-        { ref: 'refs/tags/auto-v0.1.0-2025042501' },
-        { ref: 'refs/tags/auto-v0.0.0-2025042501' }
+        { ref: `refs/tags/auto-v0.1.0-${today}01` },
+        { ref: `refs/tags/auto-v0.0.0-${today}01` }
       ];
       const result = generateVersionAndBuild(tags, 'minor', 'date', false, '');
-      const today = todayStr();
       expect(result.nextVersion).toBe('0.2.0');
       expect(result.nextBuildNumber).toBe(`${today}02`);
       expect(result.newTag).toBe(`auto-v0.2.0-${today}02`);
@@ -146,7 +146,70 @@ describe('Versioning logic (no prefix, just auto-vX.Y.Z-BUILD)', () => {
     });
 });
   
-describe('Edge case', () => { 
+describe('Shared build number across prefixes', () => {
+  test('Prod run sees staging tags when computing the next build', () => {
+    const scoped = [mockTag('1.0.0', '5')];
+    const all = [
+      mockTag('1.0.0', '5'),
+      mockTag('1.0.0', '6', 'staging'),
+      mockTag('1.0.0', '7', 'staging'),
+    ];
+    const result = generateVersionAndBuild(scoped, 'patch', 'sequential', false, '', all);
+    expect(result.nextBuildNumber).toBe('8');
+    expect(result.newTag).toBe('auto-v1.0.1-8');
+    expect(result.currentTag).toBe('auto-v1.0.0-5');
+    expect(result.oldTag).toBe(null);
+  });
+
+  test('Staging run bumps from the global max even when its own pool is empty', () => {
+    const scoped = [];
+    const all = [mockTag('2.0.0', '12'), mockTag('2.0.0', '13')];
+    const result = generateVersionAndBuild(scoped, 'patch', 'sequential', false, 'staging', all);
+    expect(result.nextBuildNumber).toBe('14');
+    expect(result.newTag).toBe('staging-auto-v0.0.1-14');
+  });
+
+  test('Date mode counts today builds across prefixes', () => {
+    const today = todayStr();
+    const scoped = [mockTag('1.0.0', `${today}01`)];
+    const all = [
+      mockTag('1.0.0', `${today}01`),
+      mockTag('1.0.0', `${today}02`, 'staging'),
+      mockTag('1.0.0', `${today}03`, 'staging'),
+    ];
+    const result = generateVersionAndBuild(scoped, 'patch', 'date', false, '', all);
+    expect(result.nextBuildNumber).toBe(`${today}04`);
+    expect(result.newTag).toBe(`auto-v1.0.1-${today}04`);
+  });
+
+  test('build number only reuses the scoped version but the global build', () => {
+    const scoped = [mockTag('3.2.1', '4', 'staging')];
+    const all = [
+      mockTag('3.2.1', '4', 'staging'),
+      mockTag('2.0.0', '9'),
+    ];
+    const result = generateVersionAndBuild(scoped, 'build number only', 'sequential', false, 'staging', all);
+    expect(result.nextVersion).toBe('3.2.1');
+    expect(result.nextBuildNumber).toBe('10');
+    expect(result.newTag).toBe('staging-auto-v3.2.1-10');
+  });
+
+  test('Deletion scope stays on the current prefix (oldTag comes from scoped)', () => {
+    const scoped = [mockTag('1.0.0', '2', 'staging'), mockTag('1.0.0', '5', 'staging')];
+    const all = [
+      ...scoped,
+      mockTag('1.0.0', '8'),
+      mockTag('1.0.0', '9'),
+    ];
+    const result = generateVersionAndBuild(scoped, 'patch', 'sequential', false, 'staging', all);
+    expect(result.currentTag).toBe('staging-auto-v1.0.0-5');
+    expect(result.oldTag).toBe('staging-auto-v1.0.0-2');
+    expect(result.nextBuildNumber).toBe('10');
+    expect(result.newTag).toBe('staging-auto-v1.0.1-10');
+  });
+});
+
+describe('Edge case', () => {
   test('Single tag present', () => {
     const tags = [mockTag('1.0.0', '5')];
     const result = generateVersionAndBuild(tags, 'patch', 'sequential', false, '');

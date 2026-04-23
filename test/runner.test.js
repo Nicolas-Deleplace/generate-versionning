@@ -6,6 +6,10 @@ vi.mock('../lib/api.js', () => ({
     { ref: 'refs/tags/auto-v2.0.0-1' },
     { ref: 'refs/tags/auto-v2.0.0-2' }
   ]),
+  getAllAutoTags: vi.fn().mockResolvedValue([
+    { ref: 'refs/tags/auto-v2.0.0-1' },
+    { ref: 'refs/tags/auto-v2.0.0-2' }
+  ]),
   createTag: vi.fn(),
   deleteOldTags: vi.fn()
 }));
