@@ -209,6 +209,52 @@ describe('Shared build number across prefixes', () => {
   });
 });
 
+describe('Increment aliases', () => {
+  test('`none` behaves identically to `no change`', () => {
+    const tags = [mockTag('1.0.0', '5')];
+    const result = generateVersionAndBuild(tags, 'none', 'sequential', false, '');
+    expect(result.nextVersion).toBe('1.0.0');
+    expect(result.nextBuildNumber).toBe('5');
+    expect(result.newTag).toBe(null);
+    expect(result.currentTag).toBe('auto-v1.0.0-5');
+  });
+
+  test('`build` behaves identically to `build number only`', () => {
+    const tags = [mockTag('1.0.0', '5')];
+    const result = generateVersionAndBuild(tags, 'build', 'sequential', false, '');
+    expect(result.nextVersion).toBe('1.0.0');
+    expect(result.nextBuildNumber).toBe('6');
+    expect(result.newTag).toBe('auto-v1.0.0-6');
+  });
+});
+
+describe('Malformed / foreign tags', () => {
+  test('Date mode with an empty tag list starts at today01', () => {
+    const today = todayStr();
+    const result = generateVersionAndBuild([], 'patch', 'date', false, '');
+    expect(result.nextBuildNumber).toBe(`${today}01`);
+    expect(result.newTag).toBe(`auto-v0.0.1-${today}01`);
+    expect(result.currentTag).toBe(null);
+    expect(result.oldTag).toBe(null);
+  });
+
+  test('Foreign refs mixed with valid auto-v tags are silently ignored', () => {
+    const tags = [
+      { ref: 'refs/tags/auto-v1.0.0-5' },
+      { ref: 'refs/tags/release-2024' },        // unrelated format
+      { ref: 'refs/tags/v3.0.0' },              // plain semver tag, not ours
+      { ref: 'refs/tags/some-random-tag' },     // arbitrary tag
+      { ref: 'refs/tags/auto-v1.0.0' },         // missing build component
+      { ref: 'refs/tags/auto-v1.0.0-abc' },     // non-numeric build
+    ];
+    const result = generateVersionAndBuild(tags, 'patch', 'sequential', false, '');
+    expect(result.currentTag).toBe('auto-v1.0.0-5');
+    expect(result.nextBuildNumber).toBe('6');
+    expect(result.newTag).toBe('auto-v1.0.1-6');
+    expect(result.oldTag).toBe(null);
+  });
+});
+
 describe('Edge case', () => {
   test('Single tag present', () => {
     const tags = [mockTag('1.0.0', '5')];
