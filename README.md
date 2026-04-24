@@ -41,7 +41,7 @@ jobs:
         with:
           token: \${{ secrets.GITHUB_TOKEN }}
           increment: patch
-          mode: sequential
+          build_number_mode: sequential
           prefix: staging
 ```
 
@@ -85,25 +85,27 @@ Without `concurrency`, both could read 42 and both end up at 43 — fine if you 
 
 ### Available Inputs
 
-| Name     | Description                                                                 |
-|----------|-----------------------------------------------------------------------------|
-| `token`  | GitHub Token to create/delete refs (default: `GITHUB_TOKEN`)                |
-| `increment` | One of: `patch`, `minor`, `major`, `feature`, `bug`, `no change`, `build number only` |
-| `mode`   | `sequential` (default) or `date` – defines the build number strategy        |
-| `reinit` | `true` to reset build number to 1                                           |
-| `prefix` | Optional string to prefix tag (e.g., `staging`, `prod`)                     |
-| `dry_run`| If true, doesn't push any new tag or delete old ones                        |
+| Name                  | Description                                                                                        |
+|-----------------------|----------------------------------------------------------------------------------------------------|
+| `token`               | GitHub Token to create/delete refs (typically `secrets.GITHUB_TOKEN`)                              |
+| `prefix`              | Optional string to prefix tag (e.g., `staging`, `prod`). Empty by default                          |
+| `increment`           | One of: `patch`, `minor`, `major`, `feature`, `bug`, `no change` / `none`, `build number only` / `build` |
+| `build_number_mode`   | `sequential` (default) or `date` — defines the build number strategy                               |
+| `build_number_reinit` | `true` to reset the build number to 1 for the current version (sequential mode only)               |
+| `dry_run`             | If `true`, simulates the run without creating or deleting tags                                     |
 
 ---
 
 ## ✅ Outputs
 
-| Name           | Description                        |
-|----------------|------------------------------------|
+| Name             | Description                       |
+|------------------|-----------------------------------|
 | `version_number` | The next semantic version         |
 | `build_number`   | The next build number             |
 | `tag_label`      | The new tag name (if generated)   |
 | `old_tag_label`  | The previous tag (if exists)      |
+
+> **Breaking change** — the `previous_tag_label` output has been removed. It was always an exact duplicate of `old_tag_label`. If any of your workflows read `${{ steps.<id>.outputs.previous_tag_label }}`, replace it with `${{ steps.<id>.outputs.old_tag_label }}`.
 
 ---
 
