@@ -43,5 +43,3 @@ outputs:
     description: 'Newly created tag label (e.g. staging-version-2.3.1-4)'
   old_tag_label:
     description: 'Previous tag label found in repository (if applicable)'
-  previous_tag_label:
-    description: 'Tag label of the previous version (before this run)'
