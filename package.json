@@ -1,6 +1,6 @@
 {
   "name": "generate-versionning",
-  "version": "1.0.0",
+  "version": "2.1.0",
   "description": "GitHub Action to generate semantic version and build numbers",
   "main": "main.js",
   "type": "module",

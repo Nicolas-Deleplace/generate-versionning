@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v3
 
       - name: Version generator
-        uses: your-org/generate-versionning@main
+        uses: your-org/generate-versionning@v2.1
         with:
           token: \${{ secrets.GITHUB_TOKEN }}
           increment: patch
@@ -61,7 +61,7 @@ jobs:
       cancel-in-progress: false       # queue, do not cancel
     steps:
       - uses: actions/checkout@v4
-      - uses: your-org/generate-versionning@v2
+      - uses: your-org/generate-versionning@v2.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           prefix: staging
@@ -105,7 +105,7 @@ Without `concurrency`, both could read 42 and both end up at 43 — fine if you 
 | `tag_label`      | The new tag name (if generated)   |
 | `old_tag_label`  | The previous tag (if exists)      |
 
-> **Breaking change** — the `previous_tag_label` output has been removed. It was always an exact duplicate of `old_tag_label`. If any of your workflows read `${{ steps.<id>.outputs.previous_tag_label }}`, replace it with `${{ steps.<id>.outputs.old_tag_label }}`.
+> **Deprecation (v2.1)** — `previous_tag_label` is still emitted as an alias of `old_tag_label` for backwards compatibility, but it is **scheduled for removal in v3**. If your workflows read `${{ steps.<id>.outputs.previous_tag_label }}`, migrate them to `${{ steps.<id>.outputs.old_tag_label }}` before upgrading to v3.
 
 ---
 
