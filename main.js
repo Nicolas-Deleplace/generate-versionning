@@ -36,6 +36,7 @@ async function run() {
     core.setOutput('build_number', result.build);
     core.setOutput('tag_label', result.tag);
     core.setOutput('old_tag_label', result.oldTag || '');
+    // Deprecated alias of `old_tag_label`. Scheduled for removal in v3.
     core.setOutput('previous_tag_label', result.oldTag || '');
     
     logInfo('Version number', result.version);

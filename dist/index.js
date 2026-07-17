@@ -29989,65 +29989,79 @@ var __webpack_exports__ = {};
 var core = __nccwpck_require__(7484);
 // EXTERNAL MODULE: ./node_modules/semver/index.js
 var semver = __nccwpck_require__(2088);
-;// CONCATENATED MODULE: ./lib/logger.js
-
-
-/**
- * Log info-level messages.
- * @param {string} message
- */
-function logInfo(message) {
-    core.info(message);
-}
-  
-/**
- * Log warning messages.
- * @param {string} message
- */
-function logWarning(message) {
-    core.warning(message);
-}
-
-/**
- * Log error messages.
- * @param {string} message
- */
-function logError(message) {
-    core.error(message);
-}
 ;// CONCATENATED MODULE: ./lib/versioning.js
 
 
+/**
+ * Parse a list of GitHub tag refs into the structured triples used by the
+ * versioning logic. Refs that do not match the `(<prefix>-)?auto-vX.Y.Z-BUILD`
+ * shape are dropped silently — this keeps the function robust against
+ * unrelated tags that may live in the same repository.
+ *
+ * @param {Array<{ ref: string }>} tags - Tag refs as returned by the GitHub API.
+ * @returns {Array<{ prefix: string, version: string, build: string, full: string }>} Parsed tag metadata.
+ */
+function parseTags(tags) {
+  return tags
+    .map(t => {
+      const match = t.ref.match(/^refs\/tags\/(?:(.+)-)?auto-v(\d+\.\d+\.\d+)-(\d+)$/);
+      return match
+        ? {
+            prefix: match[1] || '',
+            version: match[2],
+            build: match[3],
+            full: t.ref.replace('refs/tags/', ''),
+          }
+        : null;
+    })
+    .filter(Boolean);
+}
 
 /**
- * Génère les prochaines versions et tags.
+ * Decide the next version, build number and tag label for a workflow run.
+ *
+ * The function operates on two distinct pools of tags:
+ * - `scopedTags` drives the semver lifecycle of the current prefix
+ *   (`currentTag`, `oldTag`, `nextVersion`). Only tags of the caller's
+ *   prefix belong here.
+ * - `allTags` drives the build number computation and is meant to be a
+ *   superset spanning every prefix sharing the same counter (e.g. staging +
+ *   prod). When omitted, it falls back to `scopedTags`, which preserves the
+ *   legacy single-pool behaviour for callers that do not need cross-prefix
+ *   synchronisation.
+ *
+ * Sharing one build counter across prefixes requires the workflows calling
+ * this action to be serialised (see README: `concurrency:` at job level).
+ * Without serialisation two parallel runs may both observe the same max
+ * build and produce duplicate numbers.
+ *
+ * @param {Array<{ ref: string }>} scopedTags - Tags for the current prefix only.
+ * @param {'patch'|'minor'|'major'|'bug'|'feature'|'no change'|'none'|'build number only'|'build'} increment - Version bump strategy.
+ * @param {'sequential'|'date'} mode - How the build number is computed.
+ * @param {boolean} reinit - When true (and mode is sequential), reset the build number to 1.
+ * @param {string} prefix - Tag prefix used when emitting the new tag label (without the trailing "-auto").
+ * @param {Array<{ ref: string }>} [allTags=scopedTags] - Superset of tags used to compute the build number across every prefix sharing the counter.
+ * @returns {{ nextVersion: string, nextBuildNumber: string, currentTag: string|null, newTag: string|null, oldTag: string|null }} Decisions for the caller to act on.
  */
-function generateVersionAndBuild(existingTags, increment, mode, reinit, prefix) {
+function generateVersionAndBuild(scopedTags, increment, mode, reinit, prefix, allTags = scopedTags) {
   const effectivePrefix = prefix ? `${prefix}-auto` : 'auto';
 
-  const versions = existingTags.map(t => {
-    const match = t.ref.match(/^refs\/tags\/(?:(.+)-)?auto-v(\d+\.\d+\.\d+)-(\d+)$/);
-    return match ? {
-      prefix: match[1] || '',
-      version: match[2],
-      build: match[3],
-      full: t.ref.replace('refs/tags/', '')
-    } : null;
-  }).filter(Boolean);
+  const scopedVersions = parseTags(scopedTags);
+  const allVersions = parseTags(allTags);
 
-  // Tri décroissant par version, puis par numéro de build
-  const sorted = versions.sort((a, b) => {
+  // Sort descending: highest version first, then highest build within the same version
+  const sortedScoped = scopedVersions.sort((a, b) => {
     if (a.version !== b.version) {
       return semver.rcompare(a.version, b.version);
     }
     return compareBuild(a.build, b.build);
   });
 
-  const latest = sorted[0] || null;
-  const previous = sorted[1] || null;
+  const latest = sortedScoped[0] || null;
+  const previous = sortedScoped[1] || null;
 
   let nextVersion = '0.0.1';
-  let nextBuild = '1';
+  let nextBuild = computeNextBuild(allVersions, mode, reinit);
   let currentTag = null;
   let oldTag = null;
   let newTag = null;
@@ -30061,21 +30075,6 @@ function generateVersionAndBuild(existingTags, increment, mode, reinit, prefix) 
 
     oldTag = previous ? previous.full : null;
 
-    if (mode === 'date') {
-      const today = getTodayString();
-
-      const todayBuilds = versions
-        .filter(v => v.build.startsWith(today))
-        .map(v => parseInt(v.build.slice(today.length)))
-        .filter(n => !isNaN(n));
-
-      const nextIncrement = Math.max(0, ...todayBuilds) + 1;
-      nextBuild = `${today}${nextIncrement.toString().padStart(2, '0')}`;
-    } else {
-      const currentBuildNum = parseInt(currentBuild.split('.').pop());
-      nextBuild = reinit ? '1' : (currentBuildNum + 1).toString();
-    }
-
     if (increment === 'no change' || increment === 'none') {
       nextVersion = currentVersion;
       nextBuild = currentBuild;
@@ -30088,11 +30087,6 @@ function generateVersionAndBuild(existingTags, increment, mode, reinit, prefix) 
     }
   } else {
     nextVersion = computeNextVersion('0.0.0', increment);
-    if (mode === 'date') {
-      nextBuild = `${getTodayString()}01`;
-    }
-    currentTag = null;
-    oldTag = null;
     newTag = (increment === 'no change' || increment === 'none')
       ? null
       : `${effectivePrefix}-v${nextVersion}-${nextBuild}`;
@@ -30108,7 +30102,50 @@ function generateVersionAndBuild(existingTags, increment, mode, reinit, prefix) 
 }
 
 /**
- * Compute the next semantic version
+ * Compute the next build number from the global tag pool.
+ *
+ * Sequential mode takes `max(build) + 1` across every parsed tag, so it
+ * naturally shares a counter between prefixes when `allVersions` contains
+ * every prefix's tags. Date mode produces `YYYYMMDD<NN>` where `<NN>` is the
+ * next 2-digit counter among tags whose build already starts with today's
+ * date — it resets automatically on a new day.
+ *
+ * @param {Array<{ build: string }>} allVersions - Parsed tags used as the counter source.
+ * @param {'sequential'|'date'} mode - Build number strategy.
+ * @param {boolean} reinit - Sequential-only: when true, the next build is "1".
+ * @returns {string} Next build number as a string (so it can be appended to tag labels directly).
+ */
+function computeNextBuild(allVersions, mode, reinit) {
+  if (mode === 'date') {
+    const today = getTodayString();
+    const todayBuilds = allVersions
+      .filter(v => v.build.startsWith(today))
+      .map(v => parseInt(v.build.slice(today.length)))
+      .filter(n => !isNaN(n));
+
+    const nextIncrement = Math.max(0, ...todayBuilds) + 1;
+    return `${today}${nextIncrement.toString().padStart(2, '0')}`;
+  }
+
+  if (reinit) return '1';
+
+  const builds = allVersions
+    .map(v => parseInt(v.build.split('.').pop()))
+    .filter(n => !isNaN(n));
+
+  if (builds.length === 0) return '1';
+
+  return (Math.max(...builds) + 1).toString();
+}
+
+/**
+ * Apply a semver bump according to the action's increment vocabulary.
+ * Unknown or non-bumping increments (`no change`, `none`, `build number only`,
+ * `build`) return the input version unchanged.
+ *
+ * @param {string} version - Current semver (e.g. "2.3.1").
+ * @param {string} increment - Increment strategy from the action input.
+ * @returns {string} The next semver, or `version` when no bump applies.
  */
 function computeNextVersion(version, increment) {
   if (['no change', 'none', 'build number only', 'build'].includes(increment)) return version;
@@ -30124,14 +30161,20 @@ function computeNextVersion(version, increment) {
   const type = typeMap[increment] || null;
 
   if (!type || !semver.valid(version)) {
-    return version; // fallback
+    return version; // fallback: unknown increment or malformed version → no-op
   }
 
   return semver.inc(version, type);
 }
 
 /**
- * Compare two build numbers (handles numeric and date-based)
+ * Compare two build numbers in descending order. Works for both sequential
+ * (`"42"`) and date-based (`"2025042403"`) formats because the numeric
+ * extraction preserves ordering in each.
+ *
+ * @param {string} a - First build string.
+ * @param {string} b - Second build string.
+ * @returns {number} Negative when `a` is greater, positive when `b` is greater, zero when equal.
  */
 function compareBuild(a, b) {
   const aNum = parseInt(a.replace(/\D/g, ''));
@@ -30140,11 +30183,80 @@ function compareBuild(a, b) {
 }
 
 /**
- * Get current date as YYYYMMDD
+ * Return today's date as `YYYYMMDD` in UTC, matching the prefix used by
+ * date-mode build numbers.
+ *
+ * @returns {string} Eight-character date string.
  */
 function getTodayString() {
   const now = new Date();
   return now.toISOString().slice(0, 10).replace(/-/g, '');
+}
+
+;// CONCATENATED MODULE: ./lib/logger.js
+
+
+/**
+ * Format a single log argument into a human-readable string.
+ * Objects and arrays are JSON-stringified so they show up readably in the
+ * GitHub Actions log (otherwise they would render as `[object Object]`).
+ *
+ * @param {unknown} arg - Value to format.
+ * @returns {string} Safe string representation.
+ */
+function formatArg(arg) {
+  if (arg === null || arg === undefined) return String(arg);
+  if (typeof arg === 'object') {
+    try {
+      return JSON.stringify(arg);
+    } catch {
+      return String(arg);
+    }
+  }
+  return String(arg);
+}
+
+/**
+ * Join a variadic list of log arguments into the single string expected by
+ * `@actions/core`. Accepts any mix of strings, numbers, arrays and objects.
+ *
+ * @param {unknown[]} args - Arguments passed to a log call.
+ * @returns {string} Space-separated message.
+ */
+function formatMessage(args) {
+  return args.map(formatArg).join(' ');
+}
+
+/**
+ * Log an info-level message to the GitHub Actions runner output.
+ *
+ * Variadic: `logInfo('Build number:', 42)` emits `"Build number: 42"` — call
+ * sites can pass a label plus one or more values without pre-formatting.
+ *
+ * @param {...unknown} args - Message fragments.
+ */
+function logInfo(...args) {
+  core.info(formatMessage(args));
+}
+
+/**
+ * Log a warning-level message (yellow annotation in the Actions UI).
+ *
+ * @param {...unknown} args - Message fragments.
+ */
+function logWarning(...args) {
+  core.warning(formatMessage(args));
+}
+
+/**
+ * Log an error-level message (red annotation in the Actions UI). Does not
+ * fail the job on its own — use `core.setFailed` from the entry point for
+ * that.
+ *
+ * @param {...unknown} args - Message fragments.
+ */
+function logError(...args) {
+  core.error(formatMessage(args));
 }
 
 ;// CONCATENATED MODULE: ./lib/api.js
@@ -30153,7 +30265,17 @@ function getTodayString() {
 const BASE_URL = 'https://api.github.com';
 
 /**
- * Make a GitHub API request
+ * Perform a GitHub REST API request and return the parsed response.
+ *
+ * Non-2xx responses are NOT thrown from here — callers inspect `status` and
+ * decide what to do (e.g. `getTags` treats 404 as "no tags yet"). A missing
+ * or non-JSON body yields `{}` so callers can always destructure safely.
+ *
+ * @param {'GET'|'POST'|'DELETE'} method - HTTP verb.
+ * @param {string} path - API path starting with a leading slash (e.g. "/repos/foo/bar/git/refs/tags").
+ * @param {string} token - GitHub token used for the Authorization header.
+ * @param {object|null} [body=null] - Optional JSON payload; serialized only when provided.
+ * @returns {Promise<{ status: number, data: any }>} HTTP status and parsed JSON body.
  */
 async function githubRequest(method, path, token, body = null) {
     const url = `${BASE_URL}${path}`;
@@ -30176,29 +30298,89 @@ async function githubRequest(method, path, token, body = null) {
 }
 
 /**
- * Fetch existing tags matching the given prefix
+ * Fetch the raw list of tag refs from the repository.
+ * Returns an empty array when the repository has no tags yet (HTTP 404).
+ *
+ * @param {string} token - GitHub token with contents:read access.
+ * @param {string} repo - Repository in "owner/name" form.
+ * @returns {Promise<Array<{ ref: string }>>} All tag refs as returned by the GitHub API.
+ * @throws {Error} When the API responds with anything other than 200 or 404.
  */
-async function getTags(token, repo, prefix) {
+async function fetchRawTags(token, repo) {
     const path = `/repos/${repo}/git/refs/tags`;
     const { status, data } = await githubRequest('GET', path, token);
-  
-    logInfo(`🔍 Tags received:`, data.map(d => d.ref));
 
     if (status === 404) return []; // No tags
     if (status !== 200) throw new Error(`Failed to fetch tags: ${status} ${JSON.stringify(data)}`);
-  
+
+    logInfo('🔍 Tags received:', data.map(d => d.ref));
+
+    return data;
+}
+
+/**
+ * Fetch existing tags that match the given prefix.
+ *
+ * These are the tags that drive the version lifecycle of the current semantic
+ * (e.g. staging, prod): they determine `currentTag`, `oldTag` and the next
+ * semver bump, and they are the only tags this workflow is allowed to delete.
+ *
+ * @param {string} token - GitHub token with contents:read access.
+ * @param {string} repo - Repository in "owner/name" form.
+ * @param {string} prefix - Optional prefix used to scope the match (e.g. "staging"). Empty string matches non-prefixed `auto-v*` tags.
+ * @returns {Promise<Array<{ ref: string }>>} Tags matching `${prefix}-auto-vX.Y.Z-BUILD` (or `auto-vX.Y.Z-BUILD` when `prefix` is empty).
+ */
+async function getTags(token, repo, prefix) {
+    const data = await fetchRawTags(token, repo);
+
     const effectivePrefix = prefix ? `${prefix}-auto` : `auto`;
     const regex = new RegExp(`^refs/tags/${effectivePrefix}-v(\\d+\\.\\d+\\.\\d+)-(\\d+)$`);
 
     const filtered = data.filter(ref => regex.test(ref.ref));
 
-    logInfo(`🔍 Found ${filtered.length} matching tags: ${filtered.map(t => t.ref).join(', ')}`);
+    logInfo(`🔍 Found ${filtered.length} matching tags for prefix "${prefix || '(none)'}": ${filtered.map(t => t.ref).join(', ')}`);
 
     return filtered;
-  }
+}
 
 /**
- * Create a new tag ref
+ * Fetch every auto-versioned tag across the repository, regardless of prefix.
+ *
+ * Used to compute a build number that is shared across all semantics running
+ * against the same repo (e.g. staging + prod). The caller keeps using
+ * `getTags` for the prefix-scoped lifecycle (version bump, tag deletion) and
+ * overlays this broader list only to decide the next build number.
+ *
+ * Matches tags of the form `(<prefix>-)?auto-vX.Y.Z-BUILD`, where `<prefix>`
+ * may itself contain dashes (e.g. `foo-bar-auto-v1.0.0-3`).
+ *
+ * @param {string} token - GitHub token with contents:read access.
+ * @param {string} repo - Repository in "owner/name" form.
+ * @returns {Promise<Array<{ ref: string }>>} All tags matching the auto-versioning pattern, any prefix.
+ */
+async function getAllAutoTags(token, repo) {
+    const data = await fetchRawTags(token, repo);
+
+    const regex = /^refs\/tags\/(?:[^/\s]+-)?auto-v\d+\.\d+\.\d+-\d+$/;
+    const filtered = data.filter(ref => regex.test(ref.ref));
+
+    logInfo(`🔍 Found ${filtered.length} auto-versioned tags across all prefixes: ${filtered.map(t => t.ref).join(', ')}`);
+
+    return filtered;
+}
+
+/**
+ * Create a new lightweight tag ref pointing at the given commit.
+ *
+ * GitHub rejects the call with HTTP 422 when a ref of the same name already
+ * exists — that atomicity is what makes parallel workflow runs safe as long
+ * as their prefixes differ.
+ *
+ * @param {string} token - GitHub token with contents:write access.
+ * @param {string} repo - Repository in "owner/name" form.
+ * @param {string} tag - Tag label WITHOUT the "refs/tags/" prefix (e.g. "staging-auto-v1.0.0-3").
+ * @param {string} sha - Commit SHA the tag should point at.
+ * @throws {Error} When the API does not respond with 201.
  */
 async function createTag(token, repo, tag, sha) {
     const path = `/repos/${repo}/git/refs`;
@@ -30212,7 +30394,17 @@ async function createTag(token, repo, tag, sha) {
 
 
 /**
- * Delete old tag refs, excluding the one to keep
+ * Delete every tag ref in `refs` except those listed in `keepTags`.
+ *
+ * Only operate on the list the caller provided — in practice this is the
+ * prefix-scoped list from `getTags`, so a staging run will never delete a
+ * prod tag (and vice versa). Individual failures are logged as warnings and
+ * do not abort the loop, since tag cleanup is best-effort.
+ *
+ * @param {string} token - GitHub token with contents:write access.
+ * @param {string} repo - Repository in "owner/name" form.
+ * @param {Array<{ ref: string }>} refs - Tag refs to consider for deletion (must belong to the caller's prefix).
+ * @param {...(string|null|undefined)} keepTags - Tag labels (without "refs/tags/") to preserve; nullish entries are ignored.
  */
 async function deleteOldTags(token, repo, refs, ...keepTags) {
     const keepSet = new Set(keepTags.filter(Boolean).map(t => `tags/${t}`));
@@ -30235,15 +30427,43 @@ async function deleteOldTags(token, repo, refs, ...keepTags) {
 
 
 
+/**
+ * Orchestrate a full versioning run: list existing tags, decide the next
+ * version/build, then create the new tag and prune the previous one.
+ *
+ * Two separate tag listings are fetched on purpose:
+ * - prefix-scoped tags drive the semver lifecycle and bound the deletion
+ *   scope (a staging run never deletes prod tags, and vice versa);
+ * - the global list of auto-versioned tags feeds the build number
+ *   computation, so that workflows with different prefixes (staging, prod)
+ *   share a single monotonic counter.
+ *
+ * When `dryRun` is true, no GitHub write call is issued — useful for CI
+ * smoke tests and for previewing what the action would do.
+ *
+ * @param {object} params
+ * @param {string} params.token - GitHub token with contents:write access on `repo`.
+ * @param {string} params.repo - Repository in "owner/name" form.
+ * @param {string} params.sha - Commit SHA the new tag should point to.
+ * @param {object} params.inputs - Normalised action inputs.
+ * @param {string} [params.inputs.prefix] - Tag prefix (empty string for non-prefixed `auto-v*`).
+ * @param {string} [params.inputs.increment='patch'] - Semver increment strategy.
+ * @param {'sequential'|'date'} [params.inputs.build_number_mode='sequential'] - Build number strategy.
+ * @param {boolean} [params.inputs.build_number_reinit=false] - Sequential-only: reset the build to 1.
+ * @param {boolean} [params.dryRun=false] - When true, skip tag creation/deletion and report the decision.
+ * @returns {Promise<{ version: string, build: string, tag: string|null, oldTag?: string|null, currentTag?: string|null, dryRun?: boolean }>} The decisions taken (and, in dry-run, a `dryRun: true` flag).
+ */
 async function runVersioningWorkflow({ token, repo, sha, inputs, dryRun = false }) {
     const { prefix = '', increment = 'patch', build_number_mode = 'sequential', build_number_reinit = false } = inputs;
-  
-    console.log("🔍 Checking tags from API...");
 
-    const existingTags = await getTags(token, repo, prefix);
-    
-    console.log("✔️ Tags found:", existingTags.map(t => t.ref));
+    logInfo('🔍 Fetching tags from GitHub API...');
 
+    const [scopedTags, allTags] = await Promise.all([
+      getTags(token, repo, prefix),
+      getAllAutoTags(token, repo),
+    ]);
+
+    logInfo('✔️ Tags found for current prefix:', scopedTags.map(t => t.ref));
 
     const {
       nextVersion,
@@ -30251,8 +30471,15 @@ async function runVersioningWorkflow({ token, repo, sha, inputs, dryRun = false 
       newTag,
       currentTag,
       oldTag,
-    } = generateVersionAndBuild(existingTags, increment, build_number_mode, build_number_reinit === true, prefix);
-  
+    } = generateVersionAndBuild(
+      scopedTags,
+      increment,
+      build_number_mode,
+      build_number_reinit === true,
+      prefix,
+      allTags,
+    );
+
     if (dryRun) {
       logInfo(`[dry-run] Would create tag: ${newTag}`);
       logInfo(`[dry-run] Would keep tag: ${currentTag}`);
@@ -30264,12 +30491,14 @@ async function runVersioningWorkflow({ token, repo, sha, inputs, dryRun = false 
         dryRun: true,
       };
     }
-  
-    await createTag(token, repo, newTag, sha);
-    if (oldTag) {
-      await deleteOldTags(token, repo, existingTags, newTag, currentTag);
+
+    if (newTag) {
+      await createTag(token, repo, newTag, sha);
     }
-  
+    if (oldTag) {
+      await deleteOldTags(token, repo, scopedTags, newTag, currentTag);
+    }
+
     return {
       version: nextVersion,
       build: nextBuildNumber,
@@ -30278,6 +30507,7 @@ async function runVersioningWorkflow({ token, repo, sha, inputs, dryRun = false 
       currentTag,
     };
 }
+
 ;// CONCATENATED MODULE: ./main.js
 
 
@@ -30317,6 +30547,7 @@ async function run() {
     core.setOutput('build_number', result.build);
     core.setOutput('tag_label', result.tag);
     core.setOutput('old_tag_label', result.oldTag || '');
+    // Deprecated alias of `old_tag_label`. Scheduled for removal in v3.
     core.setOutput('previous_tag_label', result.oldTag || '');
     
     logInfo('Version number', result.version);
