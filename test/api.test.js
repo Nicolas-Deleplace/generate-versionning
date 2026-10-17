@@ -180,7 +180,7 @@ describe('api.js', () => {
 
       // Only auto-v1.0.0-1 should be deleted.
       expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
-        'https://api.github.com/repos/owner/repo/git/tags/auto-v1.0.0-1',
+        'https://api.github.com/repos/owner/repo/git/refs/tags/auto-v1.0.0-1',
         expect.objectContaining({ method: 'DELETE' }),
       );
     });
