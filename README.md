@@ -103,7 +103,11 @@ Without `concurrency`, both could read 42 and both end up at 43 — fine if you 
 | `version_number` | The next semantic version         |
 | `build_number`   | The next build number             |
 | `tag_label`      | The new tag name (if generated)   |
-| `old_tag_label`  | The previous tag (if exists)      |
+| `old_tag_label`  | The tag before the current one; kept in the repository |
+
+### Tag retention
+
+For each prefix, the action keeps the new, the current and the previous tag, and deletes older `(<prefix>-)?auto-v*` tags of that prefix. The first run on a repository with a backlog of auto tags prunes it all at once. Manual tags, and GitHub releases on non-`auto` tags, are never touched.
 
 > **Deprecation (v2.1)** — `previous_tag_label` is still emitted as an alias of `old_tag_label` for backwards compatibility, but it is **scheduled for removal in v3**. If your workflows read `${{ steps.<id>.outputs.previous_tag_label }}`, migrate them to `${{ steps.<id>.outputs.old_tag_label }}` before upgrading to v3.
 

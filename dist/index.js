@@ -30401,6 +30401,9 @@ async function createTag(token, repo, tag, sha) {
  * prod tag (and vice versa). Individual failures are logged as warnings and
  * do not abort the loop, since tag cleanup is best-effort.
  *
+ * The runner passes `newTag`, `currentTag` and `oldTag` as `keepTags`, so
+ * every tag label it outputs still exists when later workflow steps read it.
+ *
  * @param {string} token - GitHub token with contents:write access.
  * @param {string} repo - Repository in "owner/name" form.
  * @param {Array<{ ref: string }>} refs - Tag refs to consider for deletion (must belong to the caller's prefix).
@@ -30431,7 +30434,12 @@ async function deleteOldTags(token, repo, refs, ...keepTags) {
 
 /**
  * Orchestrate a full versioning run: list existing tags, decide the next
- * version/build, then create the new tag and prune the previous one.
+ * version/build, then create the new tag and prune the outdated ones.
+ *
+ * The prune keeps `newTag`, `currentTag` and `oldTag`, so every tag label
+ * returned here still exists when later workflow steps read it (e.g. a job
+ * checking out `old_tag_label` to build a changelog). Steady state is three
+ * auto-versioned tags per prefix.
  *
  * Two separate tag listings are fetched on purpose:
  * - prefix-scoped tags drive the semver lifecycle and bound the deletion
@@ -30482,10 +30490,15 @@ async function runVersioningWorkflow({ token, repo, sha, inputs, dryRun = false 
       allTags,
     );
 
+    const keepTags = [newTag, currentTag, oldTag];
+
     if (dryRun) {
       logInfo(`[dry-run] Would create tag: ${newTag}`);
-      logInfo(`[dry-run] Would keep tag: ${currentTag}`);
-      if (oldTag) logInfo(`[dry-run] Would delete old tag: ${oldTag}`);
+      if (oldTag) {
+        const { kept, deleted } = previewPrune(scopedTags, keepTags);
+        logInfo(`[dry-run] Would keep tags: ${kept.join(', ')}`);
+        logInfo(`[dry-run] Would delete tags: ${deleted.join(', ') || '(none)'}`);
+      }
       return {
         version: nextVersion,
         build: nextBuildNumber,
@@ -30498,7 +30511,7 @@ async function runVersioningWorkflow({ token, repo, sha, inputs, dryRun = false 
       await createTag(token, repo, newTag, sha);
     }
     if (oldTag) {
-      await deleteOldTags(token, repo, scopedTags, newTag, currentTag);
+      await deleteOldTags(token, repo, scopedTags, ...keepTags);
     }
 
     return {
@@ -30508,6 +30521,22 @@ async function runVersioningWorkflow({ token, repo, sha, inputs, dryRun = false 
       oldTag,
       currentTag,
     };
+}
+
+/**
+ * Mirror the `deleteOldTags` selection without calling the API, for dry-run
+ * reporting.
+ *
+ * @param {Array<{ ref: string }>} refs - Prefix-scoped tag refs.
+ * @param {Array<string|null|undefined>} keepTags - Tag labels to preserve; nullish entries are ignored.
+ * @returns {{ kept: string[], deleted: string[] }} Labels of the tags that would be kept and deleted.
+ */
+function previewPrune(refs, keepTags) {
+    const keepSet = new Set(keepTags.filter(Boolean));
+    const deleted = refs
+      .map(r => r.ref.replace('refs/tags/', ''))
+      .filter(label => !keepSet.has(label));
+    return { kept: [...keepSet], deleted };
 }
 
 ;// CONCATENATED MODULE: ./main.js

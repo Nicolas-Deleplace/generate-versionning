@@ -77,6 +77,7 @@ describe('runVersioningWorkflow', () => {
       scoped,
       'auto-v2.0.1-3',  // newTag — must be preserved
       'auto-v2.0.0-2',  // currentTag — must be preserved
+      'auto-v2.0.0-1',  // oldTag — must be preserved
     );
     expect(result.tag).toBe('auto-v2.0.1-3');
     expect(result.oldTag).toBe('auto-v2.0.0-1');
@@ -97,14 +98,46 @@ describe('runVersioningWorkflow', () => {
     expect(result.tag).toBeNull();
     expect(api.createTag).not.toHaveBeenCalled();
     // With "no change", no new tag is created but outdated scoped tags are
-    // still pruned — only `currentTag` is preserved, `newTag` is null.
+    // still pruned — `currentTag` and `oldTag` are preserved, `newTag` is null.
     expect(api.deleteOldTags).toHaveBeenCalledExactlyOnceWith(
       'fake-token',
       'owner/repo',
       scoped,
       null,
       'auto-v1.0.0-5',
+      'auto-v1.0.0-4',
     );
+  });
+
+  test('old_tag_label is never deleted: the tag handed to the caller survives the prune', async () => {
+    const scoped = [
+      { ref: 'refs/tags/auto-v1.0.0-1' },
+      { ref: 'refs/tags/auto-v1.0.0-2' },
+      { ref: 'refs/tags/auto-v1.0.0-3' },
+      { ref: 'refs/tags/auto-v1.0.0-4' },
+    ];
+    api.getTags.mockResolvedValue(scoped);
+    api.getAllAutoTags.mockResolvedValue(scoped);
+
+    const result = await runVersioningWorkflow(makeCall());
+
+    expect(result.tag).toBe('auto-v1.0.1-5');
+    expect(result.currentTag).toBe('auto-v1.0.0-4');
+    expect(result.oldTag).toBe('auto-v1.0.0-3');
+
+    // Replay the captured call through the real deleteOldTags, with fetch
+    // stubbed, to see which refs would actually be deleted.
+    const fetchMock = vi.fn().mockResolvedValue({ status: 204, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { deleteOldTags } = await vi.importActual('../lib/api.js');
+      await deleteOldTags(...api.deleteOldTags.mock.calls[0]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    const deleted = fetchMock.mock.calls.map(([url]) => url.split('/git/refs/tags/')[1]);
+    expect(deleted).toEqual(['auto-v1.0.0-1', 'auto-v1.0.0-2']);
   });
 
   test('Single scoped tag: createTag runs but deleteOldTags is skipped (no oldTag)', async () => {
