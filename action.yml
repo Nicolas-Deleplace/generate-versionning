@@ -2,7 +2,7 @@ name: 'Version Number Generator'
 description: 'Generate semantic version and build numbers (sequential or date-based) for GitHub Actions workflows'
 author: 'Nicolas Deleplace'
 runs:
-  using: 'node20'
+  using: 'node24'
   main: 'dist/index.js'
 
 branding:
